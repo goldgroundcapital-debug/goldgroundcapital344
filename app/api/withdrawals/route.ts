@@ -21,7 +21,7 @@ const MIN_MOMO = 100;
 const MIN_BANK = 500;
 const FEE_RATE = 0.015;
 
-export function calculateFee(amount: number) {
+function calculateFee(amount: number) {
   const fee = Math.round(amount * FEE_RATE * 100) / 100;
   return { fee, net: Math.round((amount - fee) * 100) / 100 };
 }
