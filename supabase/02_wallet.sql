@@ -66,3 +66,5 @@ create policy "wallets owner select"
 drop policy if exists "txns owner select" on public.transactions;
 create policy "txns owner select"
   on public.transactions for select using (auth.uid() = user_id);
+
+notify pgrst, 'reload schema';
