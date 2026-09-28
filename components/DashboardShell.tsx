@@ -16,6 +16,7 @@ const NAV: NavItem[] = [
   { href: "/dashboard/wallet",      label: "Wallet",             icon: <WalletNavIcon /> },
   { href: "/dashboard/referrals",   label: "Referrals",          icon: <ReferralsIcon /> },
 ];
+const ADMIN_NAV: NavItem = { href: "/dashboard/admin", label: "Admin", icon: <AdminIcon /> };
 
 const TITLES: Record<string, string> = {
   "/dashboard":              "Overview",
@@ -27,12 +28,15 @@ const TITLES: Record<string, string> = {
   "/dashboard/withdraw":     "Withdraw",
   "/dashboard/referrals":    "Referrals",
   "/dashboard/settings":     "Settings",
+  "/dashboard/admin":        "Administration",
 };
 
 export default function DashboardShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const title = TITLES[pathname] ?? "Overview";
+  const [isAdmin, setIsAdmin] = useState(false);
+  const nav = isAdmin ? [...NAV, ADMIN_NAV] : NAV;
 
   const [name, setName] = useState<string>("");
   const [email, setEmail] = useState<string>("");
@@ -43,6 +47,7 @@ export default function DashboardShell({ children }: { children: React.ReactNode
       const supabase = createClient();
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
+      setIsAdmin(user.app_metadata?.role === "admin");
       setEmail(user.email ?? "");
       const { data } = await supabase
         .from("profiles")
@@ -74,7 +79,7 @@ export default function DashboardShell({ children }: { children: React.ReactNode
         </div>
 
         <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-1">
-          {NAV.map((n) => {
+          {nav.map((n) => {
             const active = pathname === n.href || (n.href !== "/dashboard" && pathname.startsWith(n.href));
             return (
               <Link
@@ -138,7 +143,7 @@ export default function DashboardShell({ children }: { children: React.ReactNode
                 </span>
                 <div className="hidden sm:block min-w-0">
                   <div className="text-sm font-semibold text-ink-900 truncate max-w-[10rem]">{displayName}</div>
-                  <div className="text-[10px] uppercase tracking-wider text-ink-500">Investor</div>
+                  <div className="text-[10px] uppercase tracking-wider text-ink-500">{isAdmin ? "Administrator" : "Investor"}</div>
                 </div>
               </div>
             </div>
@@ -147,7 +152,7 @@ export default function DashboardShell({ children }: { children: React.ReactNode
           {/* Mobile nav strip */}
           <div className="md:hidden border-t border-cream-200 overflow-x-auto">
             <div className="flex gap-1 px-3 py-2 min-w-max">
-              {NAV.map((n) => {
+              {nav.map((n) => {
                 const active = pathname === n.href || (n.href !== "/dashboard" && pathname.startsWith(n.href));
                 return (
                   <Link
@@ -174,6 +179,15 @@ export default function DashboardShell({ children }: { children: React.ReactNode
 }
 
 /* ───────── icons ───────── */
+
+function AdminIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 3 20 6v5c0 5-3.4 8.2-8 10-4.6-1.8-8-5-8-10V6l8-3Z" />
+      <path d="m9 12 2 2 4-4" />
+    </svg>
+  );
+}
 
 function DashboardIcon() {
   return (

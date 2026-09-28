@@ -26,6 +26,12 @@ create table if not exists public.transactions (
   confirmed_at timestamptz
 );
 
+alter table public.transactions drop constraint if exists transactions_kind_check;
+alter table public.transactions add constraint transactions_kind_check check (kind in (
+  'deposit', 'withdrawal', 'fee', 'yield', 'referral',
+  'principal_lock', 'principal_release', 'admin_adjustment'
+));
+
 create index if not exists transactions_user_created on public.transactions (user_id, created_at desc);
 create index if not exists transactions_status       on public.transactions (status);
 
@@ -66,5 +72,51 @@ create policy "wallets owner select"
 drop policy if exists "txns owner select" on public.transactions;
 create policy "txns owner select"
   on public.transactions for select using (auth.uid() = user_id);
+
+-- Atomic admin-only wallet adjustment with an auditable ledger entry.
+create or replace function public.update_balance(
+  p_user_id uuid,
+  p_amount numeric,
+  p_admin_user_id uuid,
+  p_reason text
+)
+returns numeric language plpgsql security definer set search_path = public as $$
+declare
+  v_balance numeric(18,2);
+begin
+  if p_amount = 0 or p_amount <> round(p_amount, 2) then
+    raise exception 'Amount must be non-zero and have at most two decimal places';
+  end if;
+  if p_reason is null or length(btrim(p_reason)) < 3 or length(btrim(p_reason)) > 300 then
+    raise exception 'Reason must be between 3 and 300 characters';
+  end if;
+
+  update public.wallets
+    set balance = balance + p_amount
+    where user_id = p_user_id and balance + p_amount >= 0
+    returning balance into v_balance;
+
+  if not found then
+    raise exception 'Wallet not found or adjustment would make the balance negative';
+  end if;
+
+  insert into public.transactions (
+    user_id, kind, amount, status, reference, meta, confirmed_at
+  ) values (
+    p_user_id,
+    'admin_adjustment',
+    p_amount,
+    'confirmed',
+    'admin_adj_' || gen_random_uuid()::text,
+    jsonb_build_object('admin_user_id', p_admin_user_id, 'reason', btrim(p_reason)),
+    now()
+  );
+
+  return v_balance;
+end;
+$$;
+
+revoke all on function public.update_balance(uuid, numeric, uuid, text) from public, anon, authenticated;
+grant execute on function public.update_balance(uuid, numeric, uuid, text) to service_role;
 
 notify pgrst, 'reload schema';
