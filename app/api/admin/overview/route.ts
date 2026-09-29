@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient, isAdminConfigured } from "@/lib/supabase/admin";
+import { isAdminUser } from "@/lib/supabase/authorization";
 
 const PAGE_SIZE = 25;
 
@@ -8,7 +9,7 @@ export async function GET(request: Request) {
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (user.app_metadata?.role !== "admin") {
+  if (!isAdminUser(user)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   if (!isAdminConfigured()) {
@@ -18,22 +19,34 @@ export async function GET(request: Request) {
   const pageParam = Number(new URL(request.url).searchParams.get("page") ?? 1);
   const page = Number.isInteger(pageParam) && pageParam > 0 ? pageParam : 1;
   const admin = createAdminClient();
+  const activityStart = new Date();
+  activityStart.setMonth(activityStart.getMonth() - 5, 1);
+  activityStart.setHours(0, 0, 0, 0);
 
-  const [authResult, profilesResult, transactionCountResult, pendingResult, recentResult] =
+  const [authResult, profilesResult, transactionCountResult, pendingResult, pendingWithdrawalsResult, pendingDepositsResult, recentResult, activityResult] =
     await Promise.all([
       admin.auth.admin.listUsers({ page, perPage: PAGE_SIZE }),
       admin.from("profiles").select("id", { count: "exact", head: true }),
       admin.from("transactions").select("id", { count: "exact", head: true }),
       admin.from("transactions").select("id", { count: "exact", head: true }).eq("status", "pending"),
+      admin.from("transactions").select("id", { count: "exact", head: true }).eq("status", "pending").eq("kind", "withdrawal"),
+      admin.from("transactions").select("id", { count: "exact", head: true }).eq("status", "pending").eq("kind", "deposit"),
       admin
         .from("transactions")
         .select("id, user_id, kind, amount, status, reference, created_at")
         .order("created_at", { ascending: false })
         .limit(10),
+      admin
+        .from("transactions")
+        .select("kind, amount, created_at")
+        .in("kind", ["deposit", "withdrawal"])
+        .gte("created_at", activityStart.toISOString())
+        .order("created_at", { ascending: true })
+        .limit(1000),
     ]);
 
   if (authResult.error) return NextResponse.json({ error: authResult.error.message }, { status: 500 });
-  const overviewError = profilesResult.error ?? transactionCountResult.error ?? pendingResult.error ?? recentResult.error;
+  const overviewError = profilesResult.error ?? transactionCountResult.error ?? pendingResult.error ?? pendingWithdrawalsResult.error ?? pendingDepositsResult.error ?? recentResult.error ?? activityResult.error;
   if (overviewError) return NextResponse.json({ error: overviewError.message }, { status: 500 });
 
   const authUsers = authResult.data.users;
@@ -64,13 +77,33 @@ export async function GET(request: Request) {
     };
   });
 
+  const monthlyActivity = Array.from({ length: 6 }, (_, index) => {
+    const month = new Date(activityStart.getFullYear(), activityStart.getMonth() + index, 1);
+    return {
+      label: month.toLocaleDateString("en-GH", { month: "short" }),
+      key: `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, "0")}`,
+      deposits: 0,
+      withdrawals: 0,
+    };
+  });
+  const monthsByKey = new Map(monthlyActivity.map((month) => [month.key, month]));
+  for (const transaction of activityResult.data ?? []) {
+    const month = monthsByKey.get(transaction.created_at.slice(0, 7));
+    if (!month) continue;
+    if (transaction.kind === "deposit") month.deposits += Math.abs(Number(transaction.amount));
+    if (transaction.kind === "withdrawal") month.withdrawals += Math.abs(Number(transaction.amount));
+  }
+
   return NextResponse.json({
     page,
     pageSize: PAGE_SIZE,
     totalUsers: profilesResult.count ?? 0,
     totalTransactions: transactionCountResult.count ?? 0,
     pendingTransactions: pendingResult.count ?? 0,
+    pendingWithdrawals: pendingWithdrawalsResult.count ?? 0,
+    pendingDeposits: pendingDepositsResult.count ?? 0,
     users,
     transactions: recentResult.data ?? [],
+    monthlyActivity,
   });
 }

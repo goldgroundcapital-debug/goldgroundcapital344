@@ -1,13 +1,14 @@
 import { redirect } from "next/navigation";
-import AdminConsole from "@/components/AdminConsole";
+import AdminDashboard from "@/components/AdminDashboard";
 import { createClient } from "@/lib/supabase/server";
+import { isAdminUser } from "@/lib/supabase/authorization";
 
 export default async function AdminPage() {
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
 
   if (!user) redirect("/login");
-  if (user.app_metadata?.role !== "admin") redirect("/dashboard");
+  if (!isAdminUser(user)) redirect("/dashboard");
 
-  return <AdminConsole />;
+  return <AdminDashboard />;
 }

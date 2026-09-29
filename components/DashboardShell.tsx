@@ -47,8 +47,12 @@ export default function DashboardShell({ children }: { children: React.ReactNode
       const supabase = createClient();
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
-      setIsAdmin(user.app_metadata?.role === "admin");
       setEmail(user.email ?? "");
+      const accessResponse = await fetch("/api/admin/access");
+      if (accessResponse.ok) {
+        const access = await accessResponse.json();
+        setIsAdmin(access.isAdmin === true);
+      }
       const { data } = await supabase
         .from("profiles")
         .select("full_name")
@@ -67,6 +71,8 @@ export default function DashboardShell({ children }: { children: React.ReactNode
 
   const initial = (name || email || "?").trim().charAt(0).toUpperCase();
   const displayName = name || (email ? email.split("@")[0] : "Investor");
+
+  if (pathname === "/dashboard/admin") return <>{children}</>;
 
   return (
     <div className="min-h-screen flex bg-cream-50">
