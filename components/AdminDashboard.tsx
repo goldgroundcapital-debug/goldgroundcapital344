@@ -21,6 +21,7 @@ type AdminTransaction = {
   amount: number;
   status: string;
   reference: string | null;
+  proofUrl: string | null;
   created_at: string;
 };
 
@@ -242,7 +243,7 @@ export default function AdminDashboard() {
             {filteredTransactions.length === 0 ? <div className="admin-empty">{loading ? "Loading transactions…" : "No matching transactions."}</div> : (
               <div className="admin-table-scroll">
                 <table className="admin-table">
-                  <thead><tr><th>Client</th><th>Type</th><th>Amount</th><th>Date</th><th>Status</th></tr></thead>
+                  <thead><tr><th>Client</th><th>Type</th><th>Amount</th><th>Date</th><th>Proof</th><th>Status</th></tr></thead>
                   <tbody>{filteredTransactions.map((transaction) => {
                     const client = overview?.users.find((entry) => entry.id === transaction.user_id);
                     return <tr key={transaction.id}>
@@ -250,6 +251,7 @@ export default function AdminDashboard() {
                       <td className="admin-capitalize">{transaction.kind.replaceAll("_", " ")}</td>
                       <td className={Number(transaction.amount) < 0 ? "admin-amount-negative" : "admin-amount-positive"}>{currency(Number(transaction.amount))}</td>
                       <td>{new Date(transaction.created_at).toLocaleDateString("en-GH", { month: "short", day: "numeric" })}</td>
+                      <td>{transaction.proofUrl ? <a className="admin-text-link" href={transaction.proofUrl} target="_blank" rel="noreferrer">View screenshot</a> : "—"}</td>
                       <td><span className={`admin-badge ${transaction.status === "confirmed" ? "is-ok" : transaction.status === "failed" || transaction.status === "cancelled" ? "is-bad" : "is-wait"}`}>{transaction.status}</span></td>
                     </tr>;
                   })}</tbody>

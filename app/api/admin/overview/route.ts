@@ -33,7 +33,7 @@ export async function GET(request: Request) {
       admin.from("transactions").select("id", { count: "exact", head: true }).eq("status", "pending").eq("kind", "deposit"),
       admin
         .from("transactions")
-        .select("id, user_id, kind, amount, status, reference, created_at")
+        .select("id, user_id, kind, amount, status, reference, meta, created_at")
         .order("created_at", { ascending: false })
         .limit(10),
       admin
@@ -48,6 +48,14 @@ export async function GET(request: Request) {
   if (authResult.error) return NextResponse.json({ error: authResult.error.message }, { status: 500 });
   const overviewError = profilesResult.error ?? transactionCountResult.error ?? pendingResult.error ?? pendingWithdrawalsResult.error ?? pendingDepositsResult.error ?? recentResult.error ?? activityResult.error;
   if (overviewError) return NextResponse.json({ error: overviewError.message }, { status: 500 });
+
+  const transactions = await Promise.all((recentResult.data ?? []).map(async (transaction) => {
+    const meta = transaction.meta as Record<string, unknown> | null;
+    const proofPath = typeof meta?.proofPath === "string" ? meta.proofPath : null;
+    if (!proofPath) return { ...transaction, proofUrl: null };
+    const { data } = await admin.storage.from("deposit-proofs").createSignedUrl(proofPath, 60 * 60);
+    return { ...transaction, proofUrl: data?.signedUrl ?? null };
+  }));
 
   const authUsers = authResult.data.users;
   const userIds = authUsers.map((entry) => entry.id);
@@ -103,7 +111,7 @@ export async function GET(request: Request) {
     pendingWithdrawals: pendingWithdrawalsResult.count ?? 0,
     pendingDeposits: pendingDepositsResult.count ?? 0,
     users,
-    transactions: recentResult.data ?? [],
+    transactions,
     monthlyActivity,
   });
 }

@@ -26,6 +26,20 @@ create table if not exists public.transactions (
   confirmed_at timestamptz
 );
 
+-- Private storage for user-submitted Telecel deposit screenshots.
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'deposit-proofs',
+  'deposit-proofs',
+  false,
+  5242880,
+  array['image/jpeg', 'image/png', 'image/webp']
+)
+on conflict (id) do update set
+  public = false,
+  file_size_limit = excluded.file_size_limit,
+  allowed_mime_types = excluded.allowed_mime_types;
+
 alter table public.transactions drop constraint if exists transactions_kind_check;
 alter table public.transactions add constraint transactions_kind_check check (kind in (
   'deposit', 'withdrawal', 'fee', 'yield', 'referral',

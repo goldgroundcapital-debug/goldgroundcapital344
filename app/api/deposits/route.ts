@@ -1,24 +1,15 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient, isAdminConfigured } from "@/lib/supabase/admin";
-import {
-  channelFor,
-  initializeCheckout,
-  isHubtelConfigured,
-  receiveMomo,
-  toGhanaMsisdn,
-} from "@/lib/hubtel";
-
-type Body = {
-  amount: number;
-  method: "mtn" | "telecel" | "bank";
-  phone?: string;
-  bank?: string;
-  accountNumber?: string;
-  accountName?: string;
-};
 
 const MIN = 50;
+const MAX_SCREENSHOT_BYTES = 5 * 1024 * 1024;
+const BUCKET = "deposit-proofs";
+const IMAGE_TYPES = new Map([
+  ["image/jpeg", "jpg"],
+  ["image/png", "png"],
+  ["image/webp", "webp"],
+]);
 
 export async function POST(request: Request) {
   const supabase = createClient();
@@ -32,24 +23,32 @@ export async function POST(request: Request) {
     );
   }
 
-  let body: Body;
-  try { body = await request.json(); }
-  catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
+  let formData: FormData;
+  try { formData = await request.formData(); }
+  catch { return NextResponse.json({ error: "Invalid form data" }, { status: 400 }); }
 
-  const amount = Number(body.amount);
+  const amount = Number(formData.get("amount"));
   if (!Number.isFinite(amount) || amount < MIN) {
     return NextResponse.json({ error: `Minimum deposit is GH₵ ${MIN}.` }, { status: 400 });
   }
-  if (!["mtn", "telecel", "bank"].includes(body.method)) {
-    return NextResponse.json({ error: "Invalid payment method" }, { status: 400 });
+  const screenshot = formData.get("screenshot");
+  if (!(screenshot instanceof File)) {
+    return NextResponse.json({ error: "A payment screenshot is required." }, { status: 400 });
   }
-  if ((body.method === "mtn" || body.method === "telecel") && !body.phone) {
-    return NextResponse.json({ error: "Phone number is required" }, { status: 400 });
+  const extension = IMAGE_TYPES.get(screenshot.type);
+  if (!extension || screenshot.size === 0 || screenshot.size > MAX_SCREENSHOT_BYTES) {
+    return NextResponse.json({ error: "Upload a JPG, PNG or WebP image up to 5 MB." }, { status: 400 });
   }
 
   const reference = `gg_dep_${user.id.slice(0, 8)}_${Date.now()}`;
   const admin = createAdminClient();
-  const origin = new URL(request.url).origin;
+  const proofPath = `${user.id}/${reference}.${extension}`;
+  const { error: uploadError } = await admin.storage
+    .from(BUCKET)
+    .upload(proofPath, screenshot, { contentType: screenshot.type, upsert: false });
+  if (uploadError) {
+    return NextResponse.json({ error: `Unable to upload payment screenshot: ${uploadError.message}` }, { status: 500 });
+  }
 
   const { error: insertError } = await admin.from("transactions").insert({
     user_id: user.id,
@@ -58,69 +57,16 @@ export async function POST(request: Request) {
     status: "pending",
     reference,
     meta: {
-      method: body.method,
-      phone: body.phone ?? null,
-      bank: body.bank ?? null,
+      method: "telecel_manual",
+      recipient: "Francis Ntamah",
+      recipient_phone: "0203601136",
+      proofPath,
     },
   });
   if (insertError) {
+    await admin.storage.from(BUCKET).remove([proofPath]);
     return NextResponse.json({ error: insertError.message }, { status: 500 });
   }
 
-  if (!isHubtelConfigured()) {
-    return NextResponse.json({
-      ok: true,
-      reference,
-      processorConfigured: false,
-      message:
-        "Deposit recorded as pending. Hubtel isn't connected yet, so no charge will be initiated. " +
-        "Add HUBTEL_API_KEY, HUBTEL_API_SECRET, and HUBTEL_MERCHANT_ID to .env.local to enable real charges.",
-    });
-  }
-
-  try {
-    if (body.method === "bank") {
-      const res = await initializeCheckout({
-        totalAmountCedis: amount,
-        description: `GoldGround Capital deposit ${reference}`,
-        clientReference: reference,
-        callbackUrl:      `${origin}/api/hubtel/webhook`,
-        returnUrl:        `${origin}/dashboard/wallet?deposit=${reference}`,
-        cancellationUrl:  `${origin}/dashboard/wallet?cancelled=${reference}`,
-        customerName:  body.accountName ?? user.email ?? "",
-        customerEmail: user.email ?? "",
-        customerMsisdn: body.phone ?? "",
-      });
-      return NextResponse.json({
-        ok: true,
-        reference,
-        method: "bank",
-        authorizationUrl: res.data.checkoutUrl,
-      });
-    } else {
-      const msisdn = toGhanaMsisdn(body.phone!);
-      const res = await receiveMomo({
-        customerName: user.email ?? "GoldGround user",
-        customerMsisdn: msisdn,
-        channel: channelFor(body.method),
-        amountCedis: amount,
-        description: `GoldGround deposit ${reference}`,
-        clientReference: reference,
-        primaryCallbackUrl: `${origin}/api/hubtel/webhook`,
-      });
-      return NextResponse.json({
-        ok: true,
-        reference,
-        method: body.method,
-        processorStatus: res.Status,
-        displayText:
-          res.Data?.Description ??
-          "Check your phone for the payment prompt. Enter your mobile money PIN to authorise the deposit.",
-      });
-    }
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : "Hubtel error";
-    await admin.from("transactions").update({ status: "failed", meta: { error: msg } }).eq("reference", reference);
-    return NextResponse.json({ error: msg }, { status: 502 });
-  }
+  return NextResponse.json({ ok: true, reference });
 }
