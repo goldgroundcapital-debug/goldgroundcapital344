@@ -16,7 +16,7 @@ export default function GoogleButton({ next = "/dashboard", label = "Continue wi
     setError(null);
     setBusy(true);
     const supabase = createClient();
-    const callbackUrl = new URL("/auth/callback", process.env.NEXT_PUBLIC_SITE_URL || window.location.origin);
+    const callbackUrl = new URL("/auth/callback", window.location.origin);
     callbackUrl.searchParams.set("next", next);
     const { error: oauthError } = await supabase.auth.signInWithOAuth({
       provider: "google",
