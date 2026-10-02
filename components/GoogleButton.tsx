@@ -16,10 +16,11 @@ export default function GoogleButton({ next = "/dashboard", label = "Continue wi
     setError(null);
     setBusy(true);
     const supabase = createClient();
-    const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`;
+    const callbackUrl = new URL("/auth/callback", process.env.NEXT_PUBLIC_SITE_URL || window.location.origin);
+    callbackUrl.searchParams.set("next", next);
     const { error: oauthError } = await supabase.auth.signInWithOAuth({
       provider: "google",
-      options: { redirectTo },
+      options: { redirectTo: callbackUrl.toString() },
     });
     if (oauthError) {
       setBusy(false);
